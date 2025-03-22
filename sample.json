@@ -1,0 +1,28 @@
+{
+    "fields":{
+        "FIELD1":{
+            "size":500,
+            "type":"alpha_numeric",
+            "required": true
+        },
+        "FIELD2":{
+            "size":100,
+            "type":"alpha_numeric",
+            "required": true
+        },
+        "FIELD_DEC1":{
+            "size":21,
+            "size_before_decimal": 10,
+            "size_after_decimal": 10,
+            "type":"decimal",
+            "required": false
+        },"FIELD_NUMERIC1":{
+            "size":21,
+            "type":"numeric",
+            "required": false
+        }
+    },
+    "duplicate_field_check": true,
+    "columns":["FIELD1","FIELD2","FIELD_DEC1","FIELD_NUMERIC1"]
+    
+}
