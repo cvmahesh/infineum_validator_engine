@@ -1,43 +1,39 @@
 import json
+from snowflake.snowpark import Session
+from snowflake.snowpark.functions import col, length, count, when, lit
+from snowflake.snowpark.types import StructType, StructField, StringType, FloatType
 import pandas as pd
-import re
+from io import StringIO
+
+# Snowflake connection details (Replace with actual credentials)
+CONNECTION_PARAMETERS = {
+    "account": "<your_snowflake_account>",
+    "user": "<your_username>",
+    "password": "<your_password>",
+    "warehouse": "<your_warehouse>",
+    "database": "<your_database>",
+    "schema": "<your_schema>",
+    "role": "<your_role>"
+}
+
+# Initialize Snowpark session
+session = Session.builder.configs(CONNECTION_PARAMETERS).create()
 
 # Sample JSON configuration
 json_data_str = '''
 {
     "fields": {
-        "FIELD1": {
-            "size": 500,
-            "type": "alpha_numeric",
-            "required": true
-        },
-        "FIELD2": {
-            "size": 100,
-            "type": "alpha_numeric",
-            "required": true,
-            "allowed_values": ["ValidText", "XYZ789"]
-        },
-        "FIELD_DEC1": {
-            "size": 21,
-            "size_before_decimal": 10,
-            "size_after_decimal": 10,
-            "type": "decimal",
-            "required": false,
-            "range": [0, 1000]
-        },
-        "FIELD_NUMERIC1": {
-            "size": 21,
-            "type": "numeric",
-            "required": false,
-            "zero_check": true
-        }
+        "FIELD1": {"size": 500, "type": "alpha_numeric", "required": true},
+        "FIELD2": {"size": 100, "type": "alpha_numeric", "required": true, "allowed_values": ["ValidText", "XYZ789"]},
+        "FIELD_DEC1": {"size": 21, "size_before_decimal": 10, "size_after_decimal": 10, "type": "decimal", "required": false, "range": [0, 1000]},
+        "FIELD_NUMERIC1": {"size": 21, "type": "numeric", "required": false, "zero_check": true}
     },
     "duplicate_field_check": true,
     "columns": ["FIELD1", "FIELD2", "FIELD_DEC1", "FIELD_NUMERIC1"]
 }
 '''
 
-# Sample table data (CSV-like format)
+# Sample table data as CSV format
 table_data_str = """
 FIELD1,FIELD2,FIELD_DEC1,FIELD_NUMERIC1
 ABC123,XYZ789,123.45,9876543210
@@ -47,100 +43,115 @@ LONG_TEXT_EXCEEDING_LIMIT,ValidText,12.34,5678
 Value123,InvalidValue,1500.99,0
 """
 
-# Convert JSON to dictionary
+# Convert JSON string to dictionary
 json_data = json.loads(json_data_str)
 field_definitions = json_data["fields"]
 columns = json_data["columns"]
 
-# Convert table data string to Pandas DataFrame
-from io import StringIO
-df = pd.read_csv(StringIO(table_data_str))
+# Convert CSV data into a Pandas DataFrame
+df_pd = pd.read_csv(StringIO(table_data_str))
 
-# Ensure DataFrame columns match JSON column definitions
-if set(df.columns) != set(columns):
-    raise ValueError("Table columns do not match JSON column definitions.")
+# Convert Pandas DataFrame to Snowpark DataFrame
+df_snowpark = session.create_dataframe(df_pd)
 
-# Validation function
-def validate_dataframe(df):
+
+# Validation Functions
+def check_required_fields(df):
+    """Check for missing required fields."""
     errors = []
-
-    # Required field check
     for field, spec in field_definitions.items():
         if spec["required"]:
-            missing_rows = df[df[field].isna()].index.tolist()
-            for row in missing_rows:
-                errors.append(f"Row {row + 1}: '{field}' is required but missing.")
+            missing_count = df.filter((col(field).is_null()) | (col(field) == lit(""))).count()
+            if missing_count > 0:
+                errors.append(f"'{field}' is required but missing in {missing_count} rows.")
+    return errors
 
-    # Size check
+
+def check_size_constraints(df):
+    """Check if any field exceeds its defined size."""
+    errors = []
     for field, spec in field_definitions.items():
-        df[field] = df[field].astype(str).str.strip()  # Ensure string format
-        oversized_rows = df[df[field].str.len() > spec["size"]].index.tolist()
-        for row in oversized_rows:
-            errors.append(f"Row {row + 1}: '{field}' exceeds max size {spec['size']}.")
+        size_exceed_count = df.filter(length(col(field)) > spec["size"]).count()
+        if size_exceed_count > 0:
+            errors.append(f"'{field}' exceeds max size {spec['size']} in {size_exceed_count} rows.")
+    return errors
 
-    # Type validation
-    def is_alpha_numeric(value):
-        return bool(re.match(r'^[a-zA-Z0-9]*$', str(value))) if value else True
 
-    def is_numeric(value):
-        return str(value).isdigit() if value else True
-
-    def is_decimal(value, before_decimal, after_decimal):
-        match = re.match(r'^(\d+)(\.\d+)?$', str(value))
-        if match:
-            int_part, dec_part = match.group(1), match.group(2)
-            return len(int_part) <= before_decimal and (len(dec_part[1:]) if dec_part else 0) <= after_decimal
-        return False
-
+def check_numeric_and_decimal(df):
+    """Validate numeric and decimal fields based on JSON config."""
+    errors = []
     for field, spec in field_definitions.items():
-        if spec["type"] == "alpha_numeric":
-            invalid_rows = df[~df[field].apply(is_alpha_numeric)].index.tolist()
-            for row in invalid_rows:
-                errors.append(f"Row {row + 1}: '{field}' should be alphanumeric.")
-        elif spec["type"] == "numeric":
-            invalid_rows = df[~df[field].apply(is_numeric)].index.tolist()
-            for row in invalid_rows:
-                errors.append(f"Row {row + 1}: '{field}' should be numeric.")
+        if spec["type"] == "numeric":
+            invalid_numeric_count = df.filter(~col(field).rlike(r'^\d+$')).count()
+            if invalid_numeric_count > 0:
+                errors.append(f"'{field}' should be numeric in {invalid_numeric_count} rows.")
+
         elif spec["type"] == "decimal":
             before_decimal = spec.get("size_before_decimal", 10)
             after_decimal = spec.get("size_after_decimal", 10)
-            invalid_rows = df[~df[field].apply(lambda x: is_decimal(x, before_decimal, after_decimal))].index.tolist()
-            for row in invalid_rows:
-                errors.append(f"Row {row + 1}: '{field}' should be decimal with {before_decimal} digits before and {after_decimal} digits after decimal.")
+            regex_pattern = rf'^\d{{1,{before_decimal}}}(\.\d{{1,{after_decimal}}})?$'
+            invalid_decimal_count = df.filter(~col(field).rlike(regex_pattern)).count()
+            if invalid_decimal_count > 0:
+                errors.append(f"'{field}' should be a decimal with {before_decimal} digits before and {after_decimal} digits after decimal in {invalid_decimal_count} rows.")
+    return errors
 
-    # Range check
+
+def check_range(df):
+    """Check if values fall within allowed range."""
+    errors = []
     for field, spec in field_definitions.items():
         if "range" in spec:
             min_val, max_val = spec["range"]
-            out_of_range_rows = df[(df[field].astype(float) < min_val) | (df[field].astype(float) > max_val)].index.tolist()
-            for row in out_of_range_rows:
-                errors.append(f"Row {row + 1}: '{field}' value out of range {min_val}-{max_val}.")
-
-    # Zero check
-    for field, spec in field_definitions.items():
-        if spec.get("zero_check", False):
-            zero_rows = df[df[field] == "0"].index.tolist()
-            for row in zero_rows:
-                errors.append(f"Row {row + 1}: '{field}' should not be zero.")
-
-    # Allowed values check
-    for field, spec in field_definitions.items():
-        if "allowed_values" in spec:
-            invalid_rows = df[~df[field].isin(spec["allowed_values"])].index.tolist()
-            for row in invalid_rows:
-                errors.append(f"Row {row + 1}: '{field}' has an invalid value '{df.at[row, field]}'. Allowed values: {spec['allowed_values']}.")
-
-    # Duplicate check
-    if json_data.get("duplicate_field_check", False):
-        duplicates = df[df.duplicated()].index.tolist()
-        for row in duplicates:
-            errors.append(f"Row {row + 1} is a duplicate.")
-
+            out_of_range_count = df.filter((col(field).cast(FloatType()) < min_val) | (col(field).cast(FloatType()) > max_val)).count()
+            if out_of_range_count > 0:
+                errors.append(f"'{field}' values out of range {min_val}-{max_val} in {out_of_range_count} rows.")
     return errors
 
-# Main function
+
+def check_zero_values(df):
+    """Check for fields that should not be zero."""
+    errors = []
+    for field, spec in field_definitions.items():
+        if spec.get("zero_check", False):
+            zero_count = df.filter(col(field) == lit("0")).count()
+            if zero_count > 0:
+                errors.append(f"'{field}' should not be zero in {zero_count} rows.")
+    return errors
+
+
+def check_allowed_values(df):
+    """Check if fields contain only allowed values."""
+    errors = []
+    for field, spec in field_definitions.items():
+        if "allowed_values" in spec:
+            invalid_value_count = df.filter(~col(field).isin(spec["allowed_values"])).count()
+            if invalid_value_count > 0:
+                errors.append(f"'{field}' contains invalid values in {invalid_value_count} rows. Allowed values: {spec['allowed_values']}.")
+    return errors
+
+
+def check_duplicates(df):
+    """Check for duplicate rows."""
+    errors = []
+    if json_data.get("duplicate_field_check", False):
+        duplicate_count = df.group_by(columns).count().filter(col("count") > 1).count()
+        if duplicate_count > 0:
+            errors.append(f"Duplicate rows found: {duplicate_count}.")
+    return errors
+
+
+# Main Function
 def main():
-    validation_errors = validate_dataframe(df)
+    validation_errors = []
+    
+    # Run all validation checks
+    validation_errors.extend(check_required_fields(df_snowpark))
+    validation_errors.extend(check_size_constraints(df_snowpark))
+    validation_errors.extend(check_numeric_and_decimal(df_snowpark))
+    validation_errors.extend(check_range(df_snowpark))
+    validation_errors.extend(check_zero_values(df_snowpark))
+    validation_errors.extend(check_allowed_values(df_snowpark))
+    validation_errors.extend(check_duplicates(df_snowpark))
 
     # Print validation results
     if validation_errors:
@@ -149,6 +160,7 @@ def main():
             print(error)
     else:
         print("Table data is valid according to JSON specifications.")
+
 
 # Run main function
 if __name__ == "__main__":
