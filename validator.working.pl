@@ -1,6 +1,5 @@
 import json
 import csv
-from io import StringIO
 
 # Sample JSON configuration
 json_data_str = '''{
@@ -36,41 +35,40 @@ json_data_str = '''{
 }'''
 
 # Sample table data (CSV-like format)
-# table_data_str = """FIELD1,FIELD2,FIELD_DEC1,FIELD_NUMERIC1
-# ABC123,XYZ789,123.45,9876543210
-# ABC123,XYZ789,123.45,9876543210
-# LONG_TEXT_EXCEEDING_LIMIT,ValidText,12.34,5678
-# ,,456.78,90
-# Value123,InvalidValue,1500.99,0
-# """
-
-# WRONG DATA
-table_data_str = """FIELD1,FIELD2,FIELD_DEC1,FIELD_NUMERIC1, EXTRA_FLD
-ABC123,XYZ789,123.45,9876543210,0
-ABC123,XYZ789,123.45,9876543210,0
-LONG_TEXT_EXCEEDING_LIMIT,ValidText,12.34,5678,0
-,,456.78,90,0
-Value123,InvalidValue,1500.99,0,0
+table_data_str = """FIELD1,FIELD2,FIELD_DEC1,FIELD_NUMERIC1
+ABC123,XYZ789,123.45,9876543210
+ABC123,XYZ789,123.45,9876543210
+LONG_TEXT_EXCEEDING_LIMIT,ValidText,12.34,5678
+,,456.78,90
+Value123,InvalidValue,1500.99,0
 """
+
+# Global string to capture output
+validation_report = ""
+
+def log(message):
+    """Appends validation messages to the global validation_report"""
+    global validation_report
+    validation_report += message + "\n"
 
 def validate_columns(json_str, table_str):
     """Validates if all required columns from JSON config exist in the table data"""
     json_data = json.loads(json_str)
     required_columns = set(json_data.get("columns", []))
     
-    table_reader = csv.reader(StringIO(table_str))
+    table_reader = csv.reader(table_str.strip().split("\n"))
     table_columns = next(table_reader)  # First row is headers
     
     missing_columns = required_columns - set(table_columns)
     extra_columns = set(table_columns) - required_columns
     
     if missing_columns:
-        print(f"❌ Missing Columns: {missing_columns}")
+        log(f"❌ Missing Columns: {missing_columns}")
     else:
-        print("✅ All required columns are present.")
+        log("✅ All required columns are present.")
 
     if extra_columns:
-        print(f"⚠️ Extra Columns Found: {extra_columns}")
+        log(f"⚠️ Extra Columns Found: {extra_columns}")
     
     return {
         "missing_columns": list(missing_columns),
@@ -92,9 +90,9 @@ def check_duplicates(table_data):
             seen.add(row_tuple)
 
     if duplicates:
-        print(f"❌ Found {len(duplicates)} duplicate rows.")
+        log(f"❌ Found {len(duplicates)} duplicate rows.")
     else:
-        print("✅ No duplicate rows found.")
+        log("✅ No duplicate rows found.")
     
     return duplicates
 
@@ -119,25 +117,98 @@ def check_size_constraints(json_str, table_columns, table_data):
                     size_violations.append((row_num, column, value, max_size))
 
     if size_violations:
-        print(f"❌ Found {len(size_violations)} size constraint violations.")
+        log(f"❌ Found {len(size_violations)} size constraint violations.")
         for row_num, column, value, max_size in size_violations:
-            print(f"   Row {row_num}: {column} exceeds {max_size} chars ({len(value)} chars)")
+            log(f"   Row {row_num}: {column} exceeds {max_size} chars ({len(value)} chars)")
     else:
-        print("✅ No size constraint violations found.")
+        log("✅ No size constraint violations found.")
     
     return size_violations
 
 
-# Run validation
+def check_required_fields(json_str, table_columns, table_data):
+    """Checks if required fields are not empty"""
+    json_data = json.loads(json_str)
+    fields = json_data["fields"]
+    column_index_map = {col: idx for idx, col in enumerate(table_columns)}
+    
+    missing_values = []
+
+    for row_num, row in enumerate(table_data, start=1):
+        for column, config in fields.items():
+            if config.get("required", False) and column in column_index_map:
+                col_index = column_index_map[column]
+                value = row[col_index].strip() if col_index < len(row) else ""
+                
+                if value == "":
+                    missing_values.append((row_num, column))
+
+    if missing_values:
+        log(f"❌ Found {len(missing_values)} missing required fields.")
+        for row_num, column in missing_values:
+            log(f"   Row {row_num}: {column} is required but missing.")
+    else:
+        log("✅ No missing required fields.")
+    
+    return missing_values
+
+
+def check_numeric_and_decimal(json_str, table_columns, table_data):
+    """Validates numeric and decimal values based on constraints"""
+    json_data = json.loads(json_str)
+    fields = json_data["fields"]
+    column_index_map = {col: idx for idx, col in enumerate(table_columns)}
+    
+    numeric_violations = []
+
+    for row_num, row in enumerate(table_data, start=1):
+        for column, config in fields.items():
+            if column in column_index_map:
+                col_index = column_index_map[column]
+                value = row[col_index].strip() if col_index < len(row) else ""
+
+                # Check numeric values
+                if config["type"] == "numeric" and value:
+                    if not value.isdigit():
+                        numeric_violations.append((row_num, column, value, "Not a valid numeric value"))
+
+                # Check decimal values
+                elif config["type"] == "decimal" and value:
+                    try:
+                        float_value = float(value)
+                        range_values = config.get("range", [])
+                        if len(range_values) == 2 and not (range_values[0] <= float_value <= range_values[1]):
+                            numeric_violations.append((row_num, column, value, "Out of range"))
+                    except ValueError:
+                        numeric_violations.append((row_num, column, value, "Not a valid decimal value"))
+
+    if numeric_violations:
+        log(f"❌ Found {len(numeric_violations)} numeric/decimal violations.")
+        for row_num, column, value, error in numeric_violations:
+            log(f"   Row {row_num}: {column} - {value} ({error})")
+    else:
+        log("✅ No numeric/decimal validation errors.")
+    
+    return numeric_violations
+
+
+# Run validation and capture output
 column_result, table_columns, table_data = validate_columns(json_data_str, table_data_str)
 
 if column_result["is_valid"]:
     duplicates = check_duplicates(table_data)
     size_issues = check_size_constraints(json_data_str, table_columns, table_data)
+    missing_values = check_required_fields(json_data_str, table_columns, table_data)
+    numeric_issues = check_numeric_and_decimal(json_data_str, table_columns, table_data)
     
-    print("\nValidation Summary:")
-    print(f"✅ Columns Valid: {column_result['is_valid']}")
-    print(f"❌ Duplicate Rows: {len(duplicates)}")
-    print(f"❌ Size Violations: {len(size_issues)}")
+    log("\nValidation Summary:")
+    log(f"✅ Columns Valid: {column_result['is_valid']}")
+    log(f"❌ Duplicate Rows: {len(duplicates)}")
+    log(f"❌ Size Violations: {len(size_issues)}")
+    log(f"❌ Missing Required Fields: {len(missing_values)}")
+    log(f"❌ Numeric/Decimal Violations: {len(numeric_issues)}")
 else:
-    print("❌ Column validation failed. Stopping further checks.")
+    log("❌ Column validation failed. Stopping further checks.")
+
+# Print the entire validation report at the end
+print(validation_report)
