@@ -192,6 +192,47 @@ def check_numeric_and_decimal(json_str, table_columns, table_data):
     return numeric_violations
 
 
+def check_pattern(json_str, table_columns, table_data):
+    """Validates if the values follow the correct pattern based on field type"""
+    json_data = json.loads(json_str)
+    fields = json_data["fields"]
+    column_index_map = {col: idx for idx, col in enumerate(table_columns)}
+    
+    pattern_violations = []
+
+    # Define regex patterns for types
+    patterns = {
+        "alpha_numeric": r"^[a-zA-Z0-9]*$",  
+        "numeric": r"^\d+$",   
+        "decimal": r"^\d+\.\d+$",  
+    }
+
+    for row_num, row in enumerate(table_data, start=1):
+        for column, config in fields.items():
+            if column in column_index_map:
+                col_index = column_index_map[column]
+                value = row[col_index].strip() if col_index < len(row) else ""
+
+                # Check if the field has a pattern defined based on type
+                if "type" in config:
+                    field_type = config["type"]
+                    if field_type in patterns:
+                        pattern = patterns[field_type]
+                        # If the value does not match the pattern, log the violation
+                        if value and not re.match(pattern, value):
+                            pattern_violations.append((row_num, column, value, f"Invalid {field_type} pattern"))
+
+    if pattern_violations:
+        log(f"❌ Found {len(pattern_violations)} pattern violations.")
+        for row_num, column, value, error in pattern_violations:
+            log(f"   Row {row_num}: {column} - {value} ({error})")
+    else:
+        log("✅ No pattern validation errors.")
+    
+    return pattern_violations
+
+
+
 # Run validation and capture output
 column_result, table_columns, table_data = validate_columns(json_data_str, table_data_str)
 
