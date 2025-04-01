@@ -134,11 +134,11 @@ process_large_data(table_data_str)
         fields = json_data["fields"]
         column_index_map = {col: idx for idx, col in enumerate(table_columns)}
         
-        # patterns = {
-        #     "alpha_numeric": r"^[a-zA-Z0-9]*$",  
-        #     "numeric": r"^\d+$",   
-        #     "decimal": r"^\d+\.\d+$",  
-        # }
+        patterns = {
+             "alpha_numeric": r"^[a-zA-Z0-9]*$",  
+             "numeric": r"^\d+$",   
+             "decimal": r"^\d+\.\d+$",  
+        }
 
         pattern_violations = []
         
