@@ -3,41 +3,42 @@ import csv
 import re
 import sys
 import hashlib
+from io import StringIO
 
-# Sample JSON configuration
-json_data_str = '''{
-    "fields": {
-        "FIELD1": {
-            "size": 500,
-            "type": "alpha_numeric",
-            "required": true,
-            "unique": true
-        },
-        "FIELD2": {
-            "size": 100,
-            "type": "alpha_numeric",
-            "required": true,
-            "allowed_values": ["ValidText", "XYZ789"],
-            "unique": true
-        },
-        "FIELD_DEC1": {
-            "size": 21,
-            "size_before_decimal": 10,
-            "size_after_decimal": 10,
-            "type": "decimal",
-            "required": false,
-            "range": [0, 1000]
-        },
-        "FIELD_NUMERIC1": {
-            "size": 21,
-            "type": "numeric",
-            "required": false,
-            "zero_check": true
-        }
-    },
-    "duplicate_field_check": true,
-    "columns": ["FIELD1", "FIELD2", "FIELD_DEC1", "FIELD_NUMERIC1"]
-}'''
+# # Sample JSON configuration
+# json_data_str = '''{
+#     "fields": {
+#         "FIELD1": {
+#             "size": 10,
+#             "type": "2A2N",
+#             "required": true,
+#             "unique": true
+#         },
+#         "FIELD2": {
+#             "size": 100,
+#             "type": "alpha_numeric",
+#             "required": true,
+#             "allowed_values": ["ValidText", "XYZ789"],
+#             "unique": true
+#         },
+#         "FIELD_DEC1": {
+#             "size": 21,
+#             "size_before_decimal": 10,
+#             "size_after_decimal": 10,
+#             "type": "decimal",
+#             "required": false,
+#             "range": [0, 1000]
+#         },
+#         "FIELD_NUMERIC1": {
+#             "size": 21,
+#             "type": "numeric",
+#             "required": false,
+#             "zero_check": true
+#         }
+#     },
+#     "duplicate_field_check": true,
+#     "columns": ["FIELD1", "FIELD2", "FIELD_DEC1", "FIELD_NUMERIC1"]
+# }'''
 
 # Sample table data (CSV-like format) with errors
 # table_data_str = """FIELD1,FIELD_DEC1,FIELD2,FIELD_NUMERIC1
@@ -58,19 +59,52 @@ json_data_str = '''{
 # Value123,InvalidValue,100.99,0
 # """
 
-# Sample table data (CSV-like format) with errors
-table_data_str = """FIELD1,FIELD2,FIELD_DEC1,FIELD_NUMERIC1
-ABC123,XYZ789,123.45,9876543210
-ABC123,XYZ789,123.45,9876543210
-LONG_TEXT_EXCEEDING_LIMIT,ValidText,12.34,5678
-,,456.78,90
-Value123,ValidText,1500.99,0
-"""
+# # Sample table data (CSV-like format) with errors
+# table_data_str = """FIELD1,FIELD2,FIELD_DEC1,FIELD_NUMERIC1
+# ABC123,XYZ789,123.45,9876543210
+# ABC123,XYZ789,123.45,9876543210
+# LONG_TEXT_EXCEEDING_LIMIT,ValidText,12.34,5678
+# ,,456.78,90
+# Value123,ValidText,1500.99,0
+# """
 
 # Global string to capture output
 validation_report = ""
 # Global list to track validation errors
 validation_errors = []
+
+
+
+
+def read_table_as_string(filepath):
+    """Reads a CSV file and returns the content as a CSV-formatted string suitable for validation."""
+    with open(filepath, newline='', encoding='utf-8') as csvfile:
+        reader = csv.reader(csvfile)
+        output = StringIO()
+        writer = csv.writer(output)
+        for row in reader:
+            writer.writerow(row)
+        return output.getvalue()
+
+# def read_csv_file(filepath):
+#     """Reads a CSV file and returns a list of dictionaries (table-like structure)."""
+#     table_data = []
+#     with open(filepath, newline='', encoding='utf-8') as csvfile:
+#         reader = csv.DictReader(csvfile)
+#         for row in reader:
+#             table_data.append(row)
+#     return table_data
+
+def read_json_file(filepath):
+    """Reads a JSON file and returns the data as a Python object."""
+    with open(filepath, 'r', encoding='utf-8') as json_file:
+        return json.load(json_file)
+
+
+def read_json_file(filepath):
+    with open(filepath, 'r', encoding='utf-8') as f:
+        return json.load(f) 
+
 
 # def log(message):
 #     """Simple log function (assumed to be defined elsewhere)."""
@@ -138,6 +172,7 @@ def check_pattern(json_data, table_columns, table_data):
             "alpha_numeric": r"^[a-zA-Z0-9]*$",  
             "numeric": r"^\d+$",   
             "decimal": r"^\d+\.\d+$",  
+            "2A2N": r'^[A-Za-z]{2}[0-9]{2}$'
     }
 
     pattern_violations = []
@@ -163,9 +198,9 @@ def check_pattern(json_data, table_columns, table_data):
 
 
 
-def validate_columns(json_str, table_str):
+def validate_columns(json_data, table_str):
     """Validates if all required columns from JSON config exist in the table data and checks column order."""
-    json_data = json.loads(json_str)
+    #json_data = json.loads(json_str)
     required_columns = json_data.get("columns", [])
     
     table_reader = csv.reader(table_str.strip().split("\n"))
@@ -239,6 +274,8 @@ def check_size_constraints(json_data, table_columns, table_data):
                 
                 # Check size constraint
                 max_size = config.get("size", None)
+                #log(f"row_num :  {row_num} and max_size : {max_size} and value : {value} and {len(value)}")
+
                 if max_size and len(value) > max_size:
                     size_violations.append((row_num, column, value, max_size))
     if size_violations:
@@ -431,9 +468,21 @@ def check_zero_values(json_data, table_columns, table_data):
     return zero_violations
 
 
+# read json data 
+json_data = read_json_file('data.json')
+# print(json_data_str)
+
+
+table_data_str = read_table_as_string('data.csv')
+# for row in table_data_str:
+#     print(row)
+
+
+
+
 # Run validation and capture output
-json_data = json.loads(json_data_str)
-column_result, table_columns, table_data = validate_columns(json_data_str, table_data_str)
+#json_data = json.loads(json_data_str)
+column_result, table_columns, table_data = validate_columns(json_data, table_data_str)
 
 if column_result["is_valid"]:
     duplicates = check_for_duplicates(table_data)
